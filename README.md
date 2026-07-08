@@ -40,6 +40,27 @@ Operator supplied, config time values of how the server was launched. Nothing pr
 }
 ```
 
+## `GET /plugins/vllm-server-introspection/devices`
+
+Per-rank hardware properties, gathered once at startup via `collective_rpc` and
+cached for the server's lifetime. Requires an engine (`503` on the CPU only
+render server) and the worker-side `get_device_properties` method installed by
+`device_worker_ext.DeviceInfoWorkerExtension` via `--worker-extension-cls`.
+
+```jsonc
+{
+  "devices": [
+    {
+      "rank": 0,
+      "name": "A100-PCIE-40GB",
+      "total_memory_bytes": 42949672960,
+      "compute_capability": { "major": 8, "minor": 0 },
+      "num_compute_units": 108
+    }
+  ]
+}
+```
+
 ## Install
 
 ```bash
@@ -51,11 +72,18 @@ pip install -e .
 Endpoint plugins load only when explicitly named in `VLLM_PLUGINS` (off by default):
 
 ```bash
+# config only:
 VLLM_PLUGINS=vllm_server_introspection_config vllm serve <model>
+
+# config + devices (devices additionally needs the worker-extension flag):
+VLLM_PLUGINS=vllm_server_introspection_config,vllm_server_introspection_devices \
+  vllm serve <model> \
+  --worker-extension-cls vllm_server_introspection.device_worker_ext.DeviceInfoWorkerExtension
 ```
 
 ```bash
 curl http://localhost:8000/plugins/vllm-server-introspection/config
+curl http://localhost:8000/plugins/vllm-server-introspection/devices
 ```
 
 ## Test

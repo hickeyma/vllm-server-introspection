@@ -45,25 +45,28 @@ def _free_port() -> int:
 
 
 @contextlib.contextmanager
-def _running_server(*, allowlist_plugin: bool):
+def _running_server(*, plugins: str | None, worker_extension: bool = False):
     port = _free_port()
     env = dict(os.environ)
-    if allowlist_plugin:
-        env["VLLM_PLUGINS"] = "server_config"
+    if plugins:
+        env["VLLM_PLUGINS"] = plugins
     else:
         env.pop("VLLM_PLUGINS", None)
-    proc = subprocess.Popen(
-        [
-            sys.executable,
-            "-m",
-            "vllm.entrypoints.openai.api_server",
-            "--model",
-            MODEL,
-            "--port",
-            str(port),
-        ],
-        env=env,
-    )
+    args = [
+        sys.executable,
+        "-m",
+        "vllm.entrypoints.openai.api_server",
+        "--model",
+        MODEL,
+        "--port",
+        str(port),
+    ]
+    if worker_extension:
+        args += [
+            "--worker-extension-cls",
+            "vllm_server_introspection.device_worker_ext.DeviceInfoWorkerExtension",
+        ]
+    proc = subprocess.Popen(args, env=env)
     base_url = f"http://127.0.0.1:{port}"
     try:
         deadline = time.monotonic() + STARTUP_TIMEOUT_S
@@ -90,7 +93,7 @@ def _running_server(*, allowlist_plugin: bool):
 
 
 def test_server_config_endpoint_returns_200_with_valid_schema():
-    with _running_server(allowlist_plugin=True) as base_url:
+    with _running_server(plugins="vllm_server_introspection_config") as base_url:
         resp = httpx.get(f"{base_url}/plugins/vllm-server-introspection/config", timeout=10)
 
     assert resp.status_code == 200
@@ -108,7 +111,31 @@ def test_server_config_endpoint_returns_200_with_valid_schema():
 
 def test_server_config_not_attached_without_allowlist():
     """No VLLM_PLUGINS set -> route must not exist (strict allowlist)."""
-    with _running_server(allowlist_plugin=False) as base_url:
+    with _running_server(plugins=None) as base_url:
         resp = httpx.get(f"{base_url}/plugins/vllm-server-introspection/config", timeout=10)
+
+    assert resp.status_code == 404
+
+
+def test_server_devices_endpoint_returns_200_with_valid_schema():
+    with _running_server(
+        plugins="vllm_server_introspection_devices", worker_extension=True
+    ) as base_url:
+        resp = httpx.get(f"{base_url}/plugins/vllm-server-introspection/devices", timeout=10)
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert set(data.keys()) == {"devices"}
+    assert len(data["devices"]) == 1
+    device = data["devices"][0]
+    assert device["rank"] == 0
+    assert device["name"]
+    assert device["total_memory_bytes"] > 0
+
+
+def test_server_devices_not_attached_without_allowlist():
+    """No VLLM_PLUGINS set -> route must not exist (strict allowlist)."""
+    with _running_server(plugins=None) as base_url:
+        resp = httpx.get(f"{base_url}/plugins/vllm-server-introspection/devices", timeout=10)
 
     assert resp.status_code == 404

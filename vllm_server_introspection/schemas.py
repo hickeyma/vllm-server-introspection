@@ -47,3 +47,20 @@ class ServerConfigResponse(BaseModel):
     scheduler: SchedulerInfo
     parallelism: ParallelismInfo
     features: FeaturesInfo
+
+
+class ComputeCapability(BaseModel):
+    major: int
+    minor: int
+
+
+class DeviceInfo(BaseModel):
+    rank: int
+    name: str
+    total_memory_bytes: int
+    compute_capability: ComputeCapability | None = None
+    num_compute_units: int | None = None
+
+
+class DevicesResponse(BaseModel):
+    devices: list[DeviceInfo]

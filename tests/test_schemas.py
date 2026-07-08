@@ -2,6 +2,9 @@
 """Pydantic model tests for the `/plugins/vllm-server-introspection/config` response schema."""
 
 from vllm_server_introspection.schemas import (
+    ComputeCapability,
+    DeviceInfo,
+    DevicesResponse,
     FeaturesInfo,
     KVCacheInfo,
     ModelInfo,
@@ -80,3 +83,41 @@ def test_server_config_response_json_schema_has_required_sections():
         "parallelism",
         "features",
     }
+
+
+def _device_info(**overrides) -> DeviceInfo:
+    fields = dict(
+        rank=0,
+        name="A100-PCIE-40GB",
+        total_memory_bytes=42_949_672_960,
+        compute_capability=ComputeCapability(major=8, minor=0),
+        num_compute_units=108,
+    )
+    fields.update(overrides)
+    return DeviceInfo(**fields)
+
+
+def test_devices_response_roundtrip():
+    original = DevicesResponse(devices=[_device_info(), _device_info(rank=1)])
+    restored = DevicesResponse.model_validate(original.model_dump())
+    assert restored == original
+
+
+def test_devices_response_empty():
+    assert DevicesResponse(devices=[]).devices == []
+
+
+def test_device_info_compute_capability_defaults_to_none():
+    device = DeviceInfo(rank=0, name="cpu", total_memory_bytes=1024)
+    assert device.compute_capability is None
+    assert device.num_compute_units is None
+
+
+def test_device_info_null_capability_serialization():
+    dumped = _device_info(compute_capability=None).model_dump()
+    assert dumped["compute_capability"] is None
+
+
+def test_devices_response_json_schema_shape():
+    schema = DevicesResponse.model_json_schema()
+    assert set(schema["properties"]) == {"devices"}

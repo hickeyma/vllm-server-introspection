@@ -359,8 +359,8 @@ class TestGetServerConfigEndpoint:
         assert resp.status_code == 405
 
     def test_missing_state_returns_500(self):
-        # attach_router without ever calling init_state (e.g. a caller that
-        # skips Phase B): the handler must not crash on a missing attribute.
+        # attach_router without ever calling init_state.
+        # The handler must not crash on a missing attribute.
         app = FastAPI()
         ServerConfigPlugin().attach_router(app)
         with TestClient(app, raise_server_exceptions=False) as client:
@@ -373,7 +373,7 @@ class TestGetServerConfigEndpoint:
         with TestClient(app) as client:
             client.get("/plugins/vllm-server-introspection/config")
             client.get("/plugins/vllm-server-introspection/config")
-        # model_config is only read once, during init_state.
+        # model_config is only read once during init_state.
         assert cfg.model_config.max_model_len == cfg.model_config.max_model_len
         assert app.state.server_config_response is app.state.server_config_response
 
@@ -399,7 +399,7 @@ class TestGetServerConfigEndpoint:
 
 class TestPluginMetadata:
     def test_name(self):
-        assert ServerConfigPlugin().name == "server_config"
+        assert ServerConfigPlugin().name == "vllm_server_introspection_config"
 
     def test_required_tasks_is_none(self):
         assert ServerConfigPlugin().required_tasks is None
