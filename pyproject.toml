@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vllm-server-introspection"
+version = "0.1.0"
+description = "GET /plugins/vllm-server-introspection/* introspection endpoints for vLLM, integrated as endpoint plugins"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+dependencies = [
+    "vllm",
+    "fastapi",
+    "pydantic>=2",
+]
+
+[project.optional-dependencies]
+test = ["pytest", "pytest-asyncio", "httpx"]
+
+[project.entry-points."vllm.endpoint_plugins"]
+vllm_server_introspection_config = "vllm_server_introspection.config_plugin:ServerConfigPlugin"
+
+[tool.setuptools.packages.find]
+include = ["vllm_server_introspection*"]

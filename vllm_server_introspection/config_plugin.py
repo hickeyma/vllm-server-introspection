@@ -1,0 +1,122 @@
+# SPDX-License-Identifier: Apache-2.0
+"""`vllm.endpoint_plugins` entry point: `GET /plugins/vllm-server-introspection/config`.
+
+Operator supplied, config time values of how the server was launched.
+Nothing profiled or derived from model internals.
+
+`required_tasks` is `None`: this plugin needs no engine, so it is also
+eligible on the CPU only render server (`init_state` receives
+`engine_client=None` there which is fine since it is never touched).
+"""
+
+from argparse import Namespace
+from typing import TYPE_CHECKING
+
+from fastapi import APIRouter, FastAPI, HTTPException, Request
+from starlette.datastructures import State
+
+from .schemas import (
+    FeaturesInfo,
+    KVCacheInfo,
+    ModelInfo,
+    ParallelismInfo,
+    SchedulerInfo,
+    ServerConfigResponse,
+)
+
+if TYPE_CHECKING:
+    from vllm.config import VllmConfig
+    from vllm.engine.protocol import EngineClient
+
+
+def _dtype_str(dtype: object) -> str:
+    return str(dtype).removeprefix("torch.")
+
+
+def _resolve_kv_cache_dtype(cache_dtype: str, model_dtype_str: str) -> str:
+    # "auto" must be resolved to the concrete model dtype, never left as "auto".
+    return model_dtype_str if cache_dtype == "auto" else cache_dtype
+
+
+def _build_response(
+    vllm_config: "VllmConfig", served_names: list[str]
+) -> ServerConfigResponse:
+    model_cfg = vllm_config.model_config
+    cache_cfg = vllm_config.cache_config
+    scheduler_cfg = vllm_config.scheduler_config
+    parallel_cfg = vllm_config.parallel_config
+    spec_cfg = vllm_config.speculative_config
+    lora_cfg = vllm_config.lora_config
+
+    model_dtype_str = _dtype_str(model_cfg.dtype)
+
+    return ServerConfigResponse(
+        model=ModelInfo(
+            name=served_names[0],
+            served_names=served_names,
+            dtype=model_dtype_str,
+            quantization=(
+                str(model_cfg.quantization)
+                if model_cfg.quantization is not None
+                else None
+            ),
+            max_model_len=model_cfg.max_model_len,
+        ),
+        kv_cache=KVCacheInfo(
+            gpu_memory_utilization=cache_cfg.gpu_memory_utilization,
+            dtype=_resolve_kv_cache_dtype(cache_cfg.cache_dtype, model_dtype_str),
+            enable_prefix_caching=cache_cfg.enable_prefix_caching,
+        ),
+        scheduler=SchedulerInfo(
+            max_num_seqs=scheduler_cfg.max_num_seqs,
+            max_num_batched_tokens=scheduler_cfg.max_num_batched_tokens,
+            enable_chunked_prefill=scheduler_cfg.enable_chunked_prefill,
+            policy=str(scheduler_cfg.policy),
+        ),
+        parallelism=ParallelismInfo(
+            tensor_parallel_size=parallel_cfg.tensor_parallel_size,
+            pipeline_parallel_size=parallel_cfg.pipeline_parallel_size,
+            data_parallel_size=parallel_cfg.data_parallel_size,
+            data_parallel_rank=parallel_cfg.data_parallel_rank,
+        ),
+        features=FeaturesInfo(
+            speculative_decoding=spec_cfg is not None,
+            lora=lora_cfg is not None,
+            hma=not bool(
+                getattr(scheduler_cfg, "disable_hybrid_kv_cache_manager", False)
+            ),
+        ),
+    )
+
+
+class ServerConfigPlugin:
+    name = "vllm_server_introspection_config"
+    required_tasks: tuple[str, ...] | None = None
+
+    def attach_router(self, app: FastAPI) -> None:
+        router = APIRouter()
+
+        @router.get(
+            "/plugins/vllm-server-introspection/config",
+            response_model=ServerConfigResponse,
+        )
+        async def get_server_config(raw_request: Request) -> ServerConfigResponse:
+            response = getattr(raw_request.app.state, "server_config_response", None)
+            if response is None:
+                raise HTTPException(
+                    status_code=500,
+                    detail="server_config plugin state was never initialized",
+                )
+            return response
+
+        app.include_router(router)
+
+    async def init_state(
+        self, engine_client: "EngineClient | None", state: State, args: Namespace
+    ) -> None:
+        vllm_config: "VllmConfig" = state.vllm_config
+        if args.served_model_name:
+            served_names = list(args.served_model_name)
+        else:
+            served_names = [vllm_config.model_config.served_model_name]
+        state.server_config_response = _build_response(vllm_config, served_names)
