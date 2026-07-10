@@ -4,7 +4,9 @@
 Shared across all endpoint plugins in this package.
 """
 
-from pydantic import BaseModel
+from typing import Annotated, Literal
+
+from pydantic import BaseModel, Field
 
 
 class ModelInfo(BaseModel):
@@ -64,3 +66,97 @@ class DeviceInfo(BaseModel):
 
 class DevicesResponse(BaseModel):
     devices: list[DeviceInfo]
+
+
+# ---------------------------------------------------------------------------
+# `/plugins/vllm-server-introspection/kv-cache`: group specs are a
+# discriminated union keyed on `spec_type` which are ported from the `KVCacheSpec`
+# subclass names `EngineClient.get_kv_cache_config()` that serializes them as
+# ---------------------------------------------------------------------------
+
+
+class _KVCacheGroupBase(BaseModel):
+    group_id: int
+    layer_names: list[str]
+    block_size: int
+    page_size_bytes: int
+
+
+class _FullAttentionBaseSpec(_KVCacheGroupBase):
+    num_kv_heads: int
+    head_size: int
+    head_size_v: int
+    dtype: str
+    sliding_window: int | None = None
+    attention_chunk_size: int | None = None
+
+
+class FullAttentionGroupSpec(_FullAttentionBaseSpec):
+    spec_type: Literal["FullAttentionSpec"] = "FullAttentionSpec"
+
+
+class MLAAttentionGroupSpec(_FullAttentionBaseSpec):
+    spec_type: Literal["MLAAttentionSpec"] = "MLAAttentionSpec"
+    cache_dtype_str: str | None = None
+
+
+class SlidingWindowGroupSpec(_KVCacheGroupBase):
+    spec_type: Literal["SlidingWindowSpec"] = "SlidingWindowSpec"
+    num_kv_heads: int
+    head_size: int
+    dtype: str
+    sliding_window: int
+
+
+class ChunkedLocalAttentionGroupSpec(_KVCacheGroupBase):
+    spec_type: Literal["ChunkedLocalAttentionSpec"] = "ChunkedLocalAttentionSpec"
+    num_kv_heads: int
+    head_size: int
+    dtype: str
+    attention_chunk_size: int
+
+
+class MambaGroupSpec(_KVCacheGroupBase):
+    spec_type: Literal["MambaSpec"] = "MambaSpec"
+    shapes: list[list[int]]
+    dtypes: list[str]
+    mamba_type: str
+    mamba_cache_mode: str
+
+
+class CrossAttentionGroupSpec(_KVCacheGroupBase):
+    spec_type: Literal["CrossAttentionSpec"] = "CrossAttentionSpec"
+    num_kv_heads: int
+    head_size: int
+    dtype: str
+
+
+class SinkFullAttentionGroupSpec(_FullAttentionBaseSpec):
+    spec_type: Literal["SinkFullAttentionSpec"] = "SinkFullAttentionSpec"
+    sink_len: int | None = None
+
+
+class UniformTypeGroupSpec(_KVCacheGroupBase):
+    spec_type: Literal["UniformTypeKVCacheSpecs"] = "UniformTypeKVCacheSpecs"
+    layer_specs: list[dict]
+
+
+KVCacheGroupSpec = Annotated[
+    FullAttentionGroupSpec
+    | MLAAttentionGroupSpec
+    | SlidingWindowGroupSpec
+    | ChunkedLocalAttentionGroupSpec
+    | MambaGroupSpec
+    | CrossAttentionGroupSpec
+    | SinkFullAttentionGroupSpec
+    | UniformTypeGroupSpec,
+    Field(discriminator="spec_type"),
+]
+
+
+class KVCacheResponse(BaseModel):
+    kv_cache_size_tokens: int | None = None
+    max_concurrency: float | None = None
+    num_gpu_blocks: int | None = None
+    num_cpu_blocks: int | None = None
+    groups: list[KVCacheGroupSpec] = Field(default_factory=list)

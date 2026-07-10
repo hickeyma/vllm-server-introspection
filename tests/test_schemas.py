@@ -2,15 +2,24 @@
 """Pydantic model tests for the `/plugins/vllm-server-introspection/config` response schema."""
 
 from vllm_server_introspection.schemas import (
+    ChunkedLocalAttentionGroupSpec,
     ComputeCapability,
+    CrossAttentionGroupSpec,
     DeviceInfo,
     DevicesResponse,
     FeaturesInfo,
+    FullAttentionGroupSpec,
     KVCacheInfo,
+    KVCacheResponse,
+    MambaGroupSpec,
+    MLAAttentionGroupSpec,
     ModelInfo,
     ParallelismInfo,
     SchedulerInfo,
     ServerConfigResponse,
+    SinkFullAttentionGroupSpec,
+    SlidingWindowGroupSpec,
+    UniformTypeGroupSpec,
 )
 
 
@@ -121,3 +130,207 @@ def test_device_info_null_capability_serialization():
 def test_devices_response_json_schema_shape():
     schema = DevicesResponse.model_json_schema()
     assert set(schema["properties"]) == {"devices"}
+
+
+# ---------------------------------------------------------------------------
+# kv-cache group spec + response tests
+# ---------------------------------------------------------------------------
+
+_BASE_GROUP_FIELDS = dict(
+    group_id=0,
+    layer_names=["model.layers.0.self_attn"],
+    block_size=16,
+    page_size_bytes=131072,
+)
+
+
+def test_full_attention_roundtrip():
+    spec = FullAttentionGroupSpec(
+        **_BASE_GROUP_FIELDS,
+        num_kv_heads=8,
+        head_size=128,
+        head_size_v=128,
+        dtype="bfloat16",
+    )
+    restored = FullAttentionGroupSpec.model_validate(spec.model_dump())
+    assert restored == spec
+    assert spec.spec_type == "FullAttentionSpec"
+
+
+def test_full_attention_optional_fields_default_none():
+    spec = FullAttentionGroupSpec(
+        **_BASE_GROUP_FIELDS,
+        num_kv_heads=8,
+        head_size=128,
+        head_size_v=128,
+        dtype="bfloat16",
+    )
+    assert spec.sliding_window is None
+    assert spec.attention_chunk_size is None
+
+
+def test_mla_attention_roundtrip():
+    spec = MLAAttentionGroupSpec(
+        **_BASE_GROUP_FIELDS,
+        num_kv_heads=8,
+        head_size=128,
+        head_size_v=64,
+        dtype="bfloat16",
+        cache_dtype_str="float8_e4m3fn",
+    )
+    restored = MLAAttentionGroupSpec.model_validate(spec.model_dump())
+    assert restored == spec
+    assert spec.spec_type == "MLAAttentionSpec"
+
+
+def test_sliding_window_roundtrip():
+    spec = SlidingWindowGroupSpec(
+        **_BASE_GROUP_FIELDS,
+        num_kv_heads=8,
+        head_size=128,
+        dtype="float16",
+        sliding_window=4096,
+    )
+    restored = SlidingWindowGroupSpec.model_validate(spec.model_dump())
+    assert restored == spec
+    assert spec.spec_type == "SlidingWindowSpec"
+
+
+def test_chunked_local_attention_roundtrip():
+    spec = ChunkedLocalAttentionGroupSpec(
+        **_BASE_GROUP_FIELDS,
+        num_kv_heads=8,
+        head_size=128,
+        dtype="float16",
+        attention_chunk_size=2048,
+    )
+    restored = ChunkedLocalAttentionGroupSpec.model_validate(spec.model_dump())
+    assert restored == spec
+    assert spec.spec_type == "ChunkedLocalAttentionSpec"
+
+
+def test_mamba_roundtrip():
+    spec = MambaGroupSpec(
+        **{**_BASE_GROUP_FIELDS, "block_size": 1, "page_size_bytes": 4096},
+        shapes=[[16, 128], [16, 64]],
+        dtypes=["float32", "float32"],
+        mamba_type="mamba2",
+        mamba_cache_mode="none",
+    )
+    restored = MambaGroupSpec.model_validate(spec.model_dump())
+    assert restored == spec
+    assert spec.spec_type == "MambaSpec"
+
+
+def test_cross_attention_roundtrip():
+    spec = CrossAttentionGroupSpec(
+        **_BASE_GROUP_FIELDS,
+        num_kv_heads=8,
+        head_size=128,
+        dtype="bfloat16",
+    )
+    restored = CrossAttentionGroupSpec.model_validate(spec.model_dump())
+    assert restored == spec
+    assert spec.spec_type == "CrossAttentionSpec"
+
+
+def test_sink_full_attention_roundtrip():
+    spec = SinkFullAttentionGroupSpec(
+        **_BASE_GROUP_FIELDS,
+        num_kv_heads=8,
+        head_size=128,
+        head_size_v=128,
+        dtype="bfloat16",
+        sliding_window=2048,
+        sink_len=4,
+    )
+    restored = SinkFullAttentionGroupSpec.model_validate(spec.model_dump())
+    assert restored == spec
+    assert spec.spec_type == "SinkFullAttentionSpec"
+
+
+def test_sink_full_attention_sink_len_optional():
+    spec = SinkFullAttentionGroupSpec(
+        **_BASE_GROUP_FIELDS,
+        num_kv_heads=8,
+        head_size=128,
+        head_size_v=128,
+        dtype="bfloat16",
+    )
+    assert spec.sink_len is None
+
+
+def test_uniform_type_roundtrip():
+    spec = UniformTypeGroupSpec(
+        **_BASE_GROUP_FIELDS,
+        layer_specs=[{"head_size": 128}, {"head_size": 64}],
+    )
+    restored = UniformTypeGroupSpec.model_validate(spec.model_dump())
+    assert restored == spec
+    assert spec.spec_type == "UniformTypeKVCacheSpecs"
+
+
+def test_kv_cache_response_defaults():
+    resp = KVCacheResponse()
+    assert resp.kv_cache_size_tokens is None
+    assert resp.max_concurrency is None
+    assert resp.num_gpu_blocks is None
+    assert resp.num_cpu_blocks is None
+    assert resp.groups == []
+
+
+def test_kv_cache_response_roundtrip_with_groups():
+    original = KVCacheResponse(
+        kv_cache_size_tokens=16384,
+        max_concurrency=0.5,
+        num_gpu_blocks=1024,
+        num_cpu_blocks=256,
+        groups=[
+            FullAttentionGroupSpec(
+                **_BASE_GROUP_FIELDS,
+                num_kv_heads=8,
+                head_size=128,
+                head_size_v=128,
+                dtype="bfloat16",
+            )
+        ],
+    )
+    restored = KVCacheResponse.model_validate(original.model_dump())
+    assert restored == original
+
+
+def test_kv_cache_response_json_schema_has_expected_properties():
+    schema = KVCacheResponse.model_json_schema()
+    assert set(schema["properties"]) == {
+        "kv_cache_size_tokens",
+        "max_concurrency",
+        "num_gpu_blocks",
+        "num_cpu_blocks",
+        "groups",
+    }
+
+
+def test_kv_cache_response_discriminates_group_spec_types_on_validate():
+    # A discriminated union must reconstruct the correct concrete class from
+    # raw JSON, not just accept already typed model instances.
+    dumped = KVCacheResponse(
+        groups=[
+            FullAttentionGroupSpec(
+                **_BASE_GROUP_FIELDS,
+                num_kv_heads=8,
+                head_size=128,
+                head_size_v=128,
+                dtype="bfloat16",
+            ),
+            MambaGroupSpec(
+                **{**_BASE_GROUP_FIELDS, "group_id": 1, "block_size": 1, "page_size_bytes": 4096},
+                shapes=[[16, 128]],
+                dtypes=["float32"],
+                mamba_type="mamba2",
+                mamba_cache_mode="none",
+            ),
+        ]
+    ).model_dump()
+    restored = KVCacheResponse.model_validate(dumped)
+    assert isinstance(restored.groups[0], FullAttentionGroupSpec)
+    assert isinstance(restored.groups[1], MambaGroupSpec)

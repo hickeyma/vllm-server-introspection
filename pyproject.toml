@@ -21,6 +21,7 @@ test = ["pytest", "pytest-asyncio", "httpx"]
 [project.entry-points."vllm.endpoint_plugins"]
 vllm_server_introspection_config = "vllm_server_introspection.config_plugin:ServerConfigPlugin"
 vllm_server_introspection_devices = "vllm_server_introspection.devices_plugin:ServerDevicesPlugin"
+vllm_server_introspection_kv_cache = "vllm_server_introspection.kv_cache_plugin:ServerKVCachePlugin"
 
 [tool.setuptools.packages.find]
 include = ["vllm_server_introspection*"]

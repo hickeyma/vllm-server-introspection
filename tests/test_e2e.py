@@ -1,12 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
-"""End-to-end test for `GET /plugins/vllm-server-introspection/config` against a real `vllm serve`.
+"""End-to-end tests for `GET /plugins/vllm-server-introspection/{config,devices,kv-cache}`
+against a real `vllm serve`.
 
 Mirrors `tests/plugins_tests/test_endpoint_plugins.py` in vllm-project/vllm:
 `pip install -e` this package, launch a tiny model with `VLLM_PLUGINS` set,
 assert a real HTTP 200 + schema.
 
-Unlike the unit tests in `test_config_plugin.py`, this needs `vllm` importable
-and downloads model weights over the network, so it is opt-in:
+Unlike the unit tests in `test_config_plugin.py`/`test_devices_plugin.py`/
+`test_kv_cache_plugin.py`, this needs `vllm` importable and downloads model
+weights over the network, so it is opt-in:
 
     pip install -e .[test]
     RUN_VLLM_E2E=1 pytest tests/test_e2e.py -v
@@ -137,5 +139,34 @@ def test_server_devices_not_attached_without_allowlist():
     """No VLLM_PLUGINS set -> route must not exist (strict allowlist)."""
     with _running_server(plugins=None) as base_url:
         resp = httpx.get(f"{base_url}/plugins/vllm-server-introspection/devices", timeout=10)
+
+    assert resp.status_code == 404
+
+
+def test_server_kv_cache_endpoint_returns_200_with_valid_schema():
+    with _running_server(plugins="vllm_server_introspection_kv_cache") as base_url:
+        resp = httpx.get(f"{base_url}/plugins/vllm-server-introspection/kv-cache", timeout=10)
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert set(data.keys()) == {
+        "kv_cache_size_tokens",
+        "max_concurrency",
+        "num_gpu_blocks",
+        "num_cpu_blocks",
+        "groups",
+    }
+    # `EngineClient.get_kv_cache_config` (vllm-project/vllm#43793) isn't in a
+    # released vLLM yet, so this real server exercises the capacity only
+    # fallback path: capacity fields populated, no group structure.
+    assert data["num_gpu_blocks"] > 0
+    assert data["kv_cache_size_tokens"] > 0
+    assert data["groups"] == []
+
+
+def test_server_kv_cache_not_attached_without_allowlist():
+    """No VLLM_PLUGINS set -> route must not exist (strict allowlist)."""
+    with _running_server(plugins=None) as base_url:
+        resp = httpx.get(f"{base_url}/plugins/vllm-server-introspection/kv-cache", timeout=10)
 
     assert resp.status_code == 404

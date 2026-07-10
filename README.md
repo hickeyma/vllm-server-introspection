@@ -1,6 +1,6 @@
 # vllm-server-introspection
 
-`GET /plugins/vllm-server-introspection/*` introspection endpoints for [vLLM](https://github.com/vllm-project/vllm), integrated as [endpoint plugins](https://github.com/vllm-project/vllm/pull/47454) rather than core code.
+`GET /plugins/vllm-server-introspection/*` introspection endpoints for [vLLM](https://github.com/vllm-project/vllm), integrated as [endpoint plugins](https://docs.vllm.ai/en/latest/design/endpoint_plugins/) rather than core code.
 
 ## `GET /plugins/vllm-server-introspection/config`
 
@@ -42,10 +42,7 @@ Operator supplied, config time values of how the server was launched. Nothing pr
 
 ## `GET /plugins/vllm-server-introspection/devices`
 
-Per-rank hardware properties, gathered once at startup via `collective_rpc` and
-cached for the server's lifetime. Requires an engine (`503` on the CPU only
-render server) and the worker-side `get_device_properties` method installed by
-`device_worker_ext.DeviceInfoWorkerExtension` via `--worker-extension-cls`.
+Per rank hardware properties, gathered once at startup via `collective_rpc` and cached for the server's lifetime. Requires an engine (`503` on the CPU only render server) and the worker side `get_device_properties` method installed by `device_worker_ext.DeviceInfoWorkerExtension` via `--worker-extension-cls`.
 
 ```jsonc
 {
@@ -56,6 +53,36 @@ render server) and the worker-side `get_device_properties` method installed by
       "total_memory_bytes": 42949672960,
       "compute_capability": { "major": 8, "minor": 0 },
       "num_compute_units": 108
+    }
+  ]
+}
+```
+
+## `GET /plugins/vllm-server-introspection/kv-cache`
+
+Post profiling KV cache capacity and attention group structure, gathered once at startup and cached for the server's lifetime. Requires an engine (`503` on the CPU only render server). `groups` is a discriminated union keyed on `spec_type`, correctly representing hybrid models with multiple attention/mamba groups.
+
+Against a vLLM build without that method, this plugin falls back to capacity only fields read directly off `vllm_config.cache_config` and omits `groups`.
+
+```jsonc
+{
+  "kv_cache_size_tokens": 393216,
+  "max_concurrency": 48.0,
+  "num_gpu_blocks": 24576,
+  "num_cpu_blocks": 0,
+  "groups": [
+    {
+      "group_id": 0,
+      "spec_type": "FullAttentionSpec",
+      "layer_names": ["model.layers.0.self_attn", "..."],
+      "block_size": 16,
+      "page_size_bytes": 131072,
+      "num_kv_heads": 8,
+      "head_size": 128,
+      "head_size_v": 128,
+      "dtype": "bfloat16",
+      "sliding_window": null,
+      "attention_chunk_size": null
     }
   ]
 }
@@ -72,11 +99,18 @@ pip install -e .
 Endpoint plugins load only when explicitly named in `VLLM_PLUGINS` (off by default):
 
 ```bash
-# config only:
+# config only
 VLLM_PLUGINS=vllm_server_introspection_config vllm serve <model>
 
-# config + devices (devices additionally needs the worker-extension flag):
-VLLM_PLUGINS=vllm_server_introspection_config,vllm_server_introspection_devices \
+# devices only
+VLLM_PLUGINS=vllm_server_introspection_devices vllm serve <model> \
+  --worker-extension-cls vllm_server_introspection.device_worker_ext.DeviceInfoWorkerExtension
+
+# kv cache only
+VLLM_PLUGINS=vllm_server_introspection_kv_cache vllm serve <model>
+
+# all three
+VLLM_PLUGINS=vllm_server_introspection_config,vllm_server_introspection_devices,vllm_server_introspection_kv_cache \
   vllm serve <model> \
   --worker-extension-cls vllm_server_introspection.device_worker_ext.DeviceInfoWorkerExtension
 ```
@@ -84,6 +118,7 @@ VLLM_PLUGINS=vllm_server_introspection_config,vllm_server_introspection_devices 
 ```bash
 curl http://localhost:8000/plugins/vllm-server-introspection/config
 curl http://localhost:8000/plugins/vllm-server-introspection/devices
+curl http://localhost:8000/plugins/vllm-server-introspection/kv-cache
 ```
 
 ## Test
