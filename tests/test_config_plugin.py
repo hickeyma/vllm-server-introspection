@@ -18,6 +18,7 @@ from vllm_server_introspection.config_plugin import ServerConfigPlugin, _build_r
 from vllm_server_introspection.schemas import (
     FeaturesInfo,
     KVCacheInfo,
+    KVTransferInfo,
     ModelInfo,
     ParallelismInfo,
     SchedulerInfo,
@@ -69,6 +70,7 @@ def _make_vllm_config(
     disable_hybrid_kv_cache_manager: bool = False,
     speculative_config=None,
     lora_config=None,
+    kv_transfer_config=None,
 ) -> MagicMock:
     model_cfg = MagicMock()
     model_cfg.model = model_name
@@ -102,8 +104,38 @@ def _make_vllm_config(
     vllm_config.parallel_config = parallel_cfg
     vllm_config.speculative_config = speculative_config
     vllm_config.lora_config = lora_config
+    vllm_config.kv_transfer_config = kv_transfer_config
 
     return vllm_config
+
+
+def _make_kv_transfer_config(
+    *,
+    kv_connector: str | None = "NixlConnector",
+    kv_role: str | None = "kv_both",
+    kv_connector_module_path: str | None = None,
+    kv_buffer_device: str = "cuda",
+    kv_buffer_size: float = 1e9,
+    kv_ip: str = "127.0.0.1",
+    kv_port: int = 14579,
+    kv_parallel_size: int = 1,
+    kv_rank: int | None = None,
+    engine_id: str | None = "engine-0",
+    kv_connector_extra_config: dict | None = None,
+) -> MagicMock:
+    cfg = MagicMock()
+    cfg.kv_connector = kv_connector
+    cfg.kv_role = kv_role
+    cfg.kv_connector_module_path = kv_connector_module_path
+    cfg.kv_buffer_device = kv_buffer_device
+    cfg.kv_buffer_size = kv_buffer_size
+    cfg.kv_ip = kv_ip
+    cfg.kv_port = kv_port
+    cfg.kv_parallel_size = kv_parallel_size
+    cfg.kv_rank = kv_rank
+    cfg.engine_id = engine_id
+    cfg.kv_connector_extra_config = kv_connector_extra_config or {}
+    return cfg
 
 
 def _make_test_app(
@@ -291,6 +323,43 @@ class TestBuildResponseFeaturesSection:
         assert resp.features.hma is True
 
 
+class TestBuildResponseKVTransferSection:
+    def test_none_when_no_disaggregation_configured(self):
+        cfg = _make_vllm_config(kv_transfer_config=None)
+        resp = _build_response(cfg, ["m"])
+        assert resp.kv_transfer is None
+
+    def test_nixl_connector_populates_fields_and_env_derived_port(self, monkeypatch):
+        import vllm.envs as envs
+
+        monkeypatch.setattr(envs, "VLLM_NIXL_SIDE_CHANNEL_HOST", "10.0.0.5")
+        monkeypatch.setattr(envs, "VLLM_NIXL_SIDE_CHANNEL_PORT", 5600)
+
+        kv_transfer_cfg = _make_kv_transfer_config(
+            kv_connector="NixlConnector",
+            kv_role="kv_producer",
+            kv_connector_extra_config={"backend": "UCX"},
+        )
+        cfg = _make_vllm_config(kv_transfer_config=kv_transfer_cfg)
+        resp = _build_response(cfg, ["m"])
+
+        assert resp.kv_transfer is not None
+        assert resp.kv_transfer.kv_connector == "NixlConnector"
+        assert resp.kv_transfer.kv_role == "kv_producer"
+        assert resp.kv_transfer.extra_config == {"backend": "UCX"}
+        assert resp.kv_transfer.nixl_side_channel_host == "10.0.0.5"
+        assert resp.kv_transfer.nixl_side_channel_port == 5600
+
+    def test_non_nixl_connector_leaves_nixl_fields_none(self):
+        kv_transfer_cfg = _make_kv_transfer_config(kv_connector="LMCacheConnectorV1")
+        cfg = _make_vllm_config(kv_transfer_config=kv_transfer_cfg)
+        resp = _build_response(cfg, ["m"])
+        assert resp.kv_transfer is not None
+        assert resp.kv_transfer.kv_connector == "LMCacheConnectorV1"
+        assert resp.kv_transfer.nixl_side_channel_host is None
+        assert resp.kv_transfer.nixl_side_channel_port is None
+
+
 class TestBuildResponseReturnType:
     def test_returns_server_config_response(self):
         cfg = _make_vllm_config()
@@ -301,6 +370,12 @@ class TestBuildResponseReturnType:
         assert isinstance(resp.scheduler, SchedulerInfo)
         assert isinstance(resp.parallelism, ParallelismInfo)
         assert isinstance(resp.features, FeaturesInfo)
+        assert resp.kv_transfer is None
+
+    def test_returns_kv_transfer_info_when_configured(self):
+        cfg = _make_vllm_config(kv_transfer_config=_make_kv_transfer_config())
+        resp = _build_response(cfg, ["m"])
+        assert isinstance(resp.kv_transfer, KVTransferInfo)
 
 
 # ---------------------------------------------------------------------------
@@ -350,6 +425,7 @@ class TestGetServerConfigEndpoint:
             "scheduler",
             "parallelism",
             "features",
+            "kv_transfer",
         }
 
     def test_wrong_method_returns_405(self):

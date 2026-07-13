@@ -18,6 +18,7 @@ from starlette.datastructures import State
 from .schemas import (
     FeaturesInfo,
     KVCacheInfo,
+    KVTransferInfo,
     ModelInfo,
     ParallelismInfo,
     SchedulerInfo,
@@ -36,6 +37,36 @@ def _dtype_str(dtype: object) -> str:
 def _resolve_kv_cache_dtype(cache_dtype: str, model_dtype_str: str) -> str:
     # "auto" must be resolved to the concrete model dtype, never left as "auto".
     return model_dtype_str if cache_dtype == "auto" else cache_dtype
+
+
+def _build_kv_transfer_info(vllm_config: "VllmConfig") -> KVTransferInfo | None:
+    kv_transfer_cfg = getattr(vllm_config, "kv_transfer_config", None)
+    if kv_transfer_cfg is None:
+        return None
+
+    nixl_host = None
+    nixl_port = None
+    if kv_transfer_cfg.kv_connector == "NixlConnector":
+        from vllm import envs
+
+        nixl_host = envs.VLLM_NIXL_SIDE_CHANNEL_HOST
+        nixl_port = envs.VLLM_NIXL_SIDE_CHANNEL_PORT
+
+    return KVTransferInfo(
+        kv_connector=kv_transfer_cfg.kv_connector,
+        kv_role=kv_transfer_cfg.kv_role,
+        kv_connector_module_path=kv_transfer_cfg.kv_connector_module_path,
+        kv_buffer_device=kv_transfer_cfg.kv_buffer_device,
+        kv_buffer_size=kv_transfer_cfg.kv_buffer_size,
+        kv_ip=kv_transfer_cfg.kv_ip,
+        kv_port=kv_transfer_cfg.kv_port,
+        kv_parallel_size=kv_transfer_cfg.kv_parallel_size,
+        kv_rank=kv_transfer_cfg.kv_rank,
+        engine_id=kv_transfer_cfg.engine_id,
+        extra_config=kv_transfer_cfg.kv_connector_extra_config,
+        nixl_side_channel_host=nixl_host,
+        nixl_side_channel_port=nixl_port,
+    )
 
 
 def _build_response(
@@ -86,6 +117,7 @@ def _build_response(
                 getattr(scheduler_cfg, "disable_hybrid_kv_cache_manager", False)
             ),
         ),
+        kv_transfer=_build_kv_transfer_info(vllm_config),
     )
 
 

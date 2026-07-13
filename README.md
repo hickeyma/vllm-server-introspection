@@ -36,9 +36,29 @@ Operator supplied, config time values of how the server was launched. Nothing pr
     "speculative_decoding": false,
     "lora": true,
     "hma": true
+  },
+  "kv_transfer": {
+    "kv_connector": "NixlConnector",
+    "kv_role": "kv_both",
+    "kv_connector_module_path": null,
+    "kv_buffer_device": "cuda",
+    "kv_buffer_size": 1000000000.0,
+    "kv_ip": "127.0.0.1",
+    "kv_port": 14579,
+    "kv_parallel_size": 1,
+    "kv_rank": null,
+    "engine_id": "engine-0",
+    "extra_config": {},
+    "nixl_side_channel_host": "localhost",
+    "nixl_side_channel_port": 5600
   }
 }
 ```
+> [!NOTE]
+> `kv_transfer` is `null` when no disaggregation/KV offloading connector is configured (`vllm_config.kv_transfer_config` is `None`). `nixl_side_channel_host`/`nixl_side_channel_port` are only populated when `kv_connector` is `"NixlConnector"` They report the env derived *base* host/port (`VLLM_NIXL_SIDE_CHANNEL_HOST`/`VLLM_NIXL_SIDE_CHANNEL_PORT`). `NixlConnector` derives the actual per rank bound port as `base_port + rank_offset` inside the worker.
+
+> [!WARNING]
+> `kv_connector_extra_config` is free form and operator controlled. It could theoretically contain sensitive data. 
 
 ## `GET /plugins/vllm-server-introspection/devices`
 

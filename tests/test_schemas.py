@@ -91,6 +91,7 @@ def test_server_config_response_json_schema_has_required_sections():
         "scheduler",
         "parallelism",
         "features",
+        "kv_transfer",
     }
 
 

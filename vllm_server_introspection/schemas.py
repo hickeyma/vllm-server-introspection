@@ -43,12 +43,32 @@ class FeaturesInfo(BaseModel):
     hma: bool
 
 
+class KVTransferInfo(BaseModel):
+    kv_connector: str | None
+    kv_role: str | None
+    kv_connector_module_path: str | None = None
+    kv_buffer_device: str | None = None
+    kv_buffer_size: float | None = None
+    kv_ip: str | None = None
+    kv_port: int | None = None
+    kv_parallel_size: int | None = None
+    kv_rank: int | None = None
+    engine_id: str | None = None
+    extra_config: dict = Field(default_factory=dict)
+    # NIXL side channel base endpoint (env derived only when connector is
+    # NixlConnector). This is the base host/port. NixlConnector derives the
+    # actual per rank port as base_port + rank_offset inside the worker.
+    nixl_side_channel_host: str | None = None
+    nixl_side_channel_port: int | None = None
+
+
 class ServerConfigResponse(BaseModel):
     model: ModelInfo
     kv_cache: KVCacheInfo
     scheduler: SchedulerInfo
     parallelism: ParallelismInfo
     features: FeaturesInfo
+    kv_transfer: KVTransferInfo | None = None
 
 
 class ComputeCapability(BaseModel):
