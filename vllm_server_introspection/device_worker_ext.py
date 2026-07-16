@@ -15,6 +15,13 @@ Enable with:
 
 from typing import Any
 
+from vllm.logger import init_logger
+
+# "vllm." prefix required. vLLM's default logging config only attaches a
+# handler to the "vllm" logger tree (propagate=False), so a bare __name__
+# logger has no handler anywhere and silently drops every message.
+logger = init_logger(f"vllm.{__name__}")
+
 
 def _safe(fn: Any, *args: Any) -> Any:
     # Some platforms (e.g. CPU) don't implement every `current_platform`
@@ -32,7 +39,7 @@ class DeviceInfoWorkerExtension:
 
         device_id = self.local_rank
         capability = _safe(current_platform.get_device_capability, device_id)
-        return {
+        properties = {
             "rank": self.rank,
             "name": _safe(current_platform.get_device_name, device_id),
             "total_memory_bytes": _safe(
@@ -45,3 +52,7 @@ class DeviceInfoWorkerExtension:
             ),
             "num_compute_units": _safe(current_platform.num_compute_units, device_id),
         }
+        logger.info(
+            "device_worker_ext: rank=%d name=%s", self.rank, properties["name"]
+        )
+        return properties

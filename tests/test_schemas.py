@@ -7,6 +7,7 @@ from vllm_server_introspection.schemas import (
     CrossAttentionGroupSpec,
     DeviceInfo,
     DevicesResponse,
+    EncoderOnlyAttentionGroupSpec,
     FeaturesInfo,
     FullAttentionGroupSpec,
     KVCacheInfo,
@@ -19,7 +20,8 @@ from vllm_server_introspection.schemas import (
     ServerConfigResponse,
     SinkFullAttentionGroupSpec,
     SlidingWindowGroupSpec,
-    UniformTypeGroupSpec,
+    SlidingWindowMLAGroupSpec,
+    UnknownGroupSpec,
 )
 
 
@@ -139,6 +141,7 @@ def test_devices_response_json_schema_shape():
 
 _BASE_GROUP_FIELDS = dict(
     group_id=0,
+    layer_count=1,
     layer_names=["model.layers.0.self_attn"],
     block_size=16,
     page_size_bytes=131072,
@@ -155,7 +158,7 @@ def test_full_attention_roundtrip():
     )
     restored = FullAttentionGroupSpec.model_validate(spec.model_dump())
     assert restored == spec
-    assert spec.spec_type == "FullAttentionSpec"
+    assert spec.kind == "full_attention"
 
 
 def test_full_attention_optional_fields_default_none():
@@ -181,7 +184,7 @@ def test_mla_attention_roundtrip():
     )
     restored = MLAAttentionGroupSpec.model_validate(spec.model_dump())
     assert restored == spec
-    assert spec.spec_type == "MLAAttentionSpec"
+    assert spec.kind == "mla_attention"
 
 
 def test_sliding_window_roundtrip():
@@ -194,7 +197,22 @@ def test_sliding_window_roundtrip():
     )
     restored = SlidingWindowGroupSpec.model_validate(spec.model_dump())
     assert restored == spec
-    assert spec.spec_type == "SlidingWindowSpec"
+    assert spec.kind == "sliding_window"
+
+
+def test_sliding_window_mla_roundtrip():
+    spec = SlidingWindowMLAGroupSpec(
+        **_BASE_GROUP_FIELDS,
+        num_kv_heads=8,
+        head_size=128,
+        head_size_v=64,
+        dtype="bfloat16",
+        sliding_window=4096,
+        cache_dtype_str="float8_e4m3fn",
+    )
+    restored = SlidingWindowMLAGroupSpec.model_validate(spec.model_dump())
+    assert restored == spec
+    assert spec.kind == "sliding_window_mla"
 
 
 def test_chunked_local_attention_roundtrip():
@@ -207,7 +225,7 @@ def test_chunked_local_attention_roundtrip():
     )
     restored = ChunkedLocalAttentionGroupSpec.model_validate(spec.model_dump())
     assert restored == spec
-    assert spec.spec_type == "ChunkedLocalAttentionSpec"
+    assert spec.kind == "chunked_local_attention"
 
 
 def test_mamba_roundtrip():
@@ -220,7 +238,7 @@ def test_mamba_roundtrip():
     )
     restored = MambaGroupSpec.model_validate(spec.model_dump())
     assert restored == spec
-    assert spec.spec_type == "MambaSpec"
+    assert spec.kind == "mamba"
 
 
 def test_cross_attention_roundtrip():
@@ -232,7 +250,19 @@ def test_cross_attention_roundtrip():
     )
     restored = CrossAttentionGroupSpec.model_validate(spec.model_dump())
     assert restored == spec
-    assert spec.spec_type == "CrossAttentionSpec"
+    assert spec.kind == "cross_attention"
+
+
+def test_encoder_only_attention_roundtrip():
+    spec = EncoderOnlyAttentionGroupSpec(
+        **_BASE_GROUP_FIELDS,
+        num_kv_heads=8,
+        head_size=128,
+        dtype="bfloat16",
+    )
+    restored = EncoderOnlyAttentionGroupSpec.model_validate(spec.model_dump())
+    assert restored == spec
+    assert spec.kind == "encoder_only_attention"
 
 
 def test_sink_full_attention_roundtrip():
@@ -247,7 +277,7 @@ def test_sink_full_attention_roundtrip():
     )
     restored = SinkFullAttentionGroupSpec.model_validate(spec.model_dump())
     assert restored == spec
-    assert spec.spec_type == "SinkFullAttentionSpec"
+    assert spec.kind == "sink_full_attention"
 
 
 def test_sink_full_attention_sink_len_optional():
@@ -261,14 +291,27 @@ def test_sink_full_attention_sink_len_optional():
     assert spec.sink_len is None
 
 
-def test_uniform_type_roundtrip():
-    spec = UniformTypeGroupSpec(
+def test_unknown_roundtrip():
+    spec = UnknownGroupSpec(**_BASE_GROUP_FIELDS)
+    restored = UnknownGroupSpec.model_validate(spec.model_dump())
+    assert restored == spec
+    assert spec.kind == "unknown"
+
+
+def test_full_attention_layer_specs_populated_for_uniform_type_group():
+    # A UniformTypeKVCacheSpecs group resolves to its inner kind but keeps
+    # layer_specs populated (None for a regular, non fanned out group).
+    spec = FullAttentionGroupSpec(
         **_BASE_GROUP_FIELDS,
+        num_kv_heads=8,
+        head_size=128,
+        head_size_v=128,
+        dtype="bfloat16",
         layer_specs=[{"head_size": 128}, {"head_size": 64}],
     )
-    restored = UniformTypeGroupSpec.model_validate(spec.model_dump())
+    restored = FullAttentionGroupSpec.model_validate(spec.model_dump())
     assert restored == spec
-    assert spec.spec_type == "UniformTypeKVCacheSpecs"
+    assert spec.layer_specs == [{"head_size": 128}, {"head_size": 64}]
 
 
 def test_kv_cache_response_defaults():

@@ -20,12 +20,18 @@ from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, FastAPI, HTTPException, Request
 from starlette.datastructures import State
+from vllm.logger import init_logger
 from vllm.tasks import GENERATION_TASKS, POOLING_TASKS
 
 from .schemas import ComputeCapability, DeviceInfo, DevicesResponse
 
 if TYPE_CHECKING:
     from vllm.engine.protocol import EngineClient
+
+# "vllm." prefix required. vLLM's default logging config only attaches a
+# handler to the "vllm" logger tree (propagate=False), so a bare __name__
+# logger has no handler anywhere and silently drops every message.
+logger = init_logger(f"vllm.{__name__}")
 
 _UNSET = object()
 
@@ -86,5 +92,9 @@ class ServerDevicesPlugin:
         if engine_client is None:
             state.server_devices_response = None
             return
+        # Uses DeviceInfoWorkerExtension::get_device_properties() extension to call vLLM engine
+        # worker methods
         raw_devices = await engine_client.collective_rpc("get_device_properties")
-        state.server_devices_response = _build_response(raw_devices)
+        response = _build_response(raw_devices)
+        state.server_devices_response = response
+        logger.info("devices plugin initialized: devices=%d", len(response.devices))

@@ -90,16 +90,24 @@ class DevicesResponse(BaseModel):
 
 # ---------------------------------------------------------------------------
 # `/plugins/vllm-server-introspection/kv-cache`: group specs are a
-# discriminated union keyed on `spec_type` which are ported from the `KVCacheSpec`
-# subclass names `EngineClient.get_kv_cache_config()` that serializes them as
+# discriminated union keyed on `kind`, matching the field names and
+# `KVCacheSpecKind` string values `EngineClient.get_kv_cache_group_metadata()`
+# serializes groups under (vllm-project/vllm#48121). Every group dict carries
+# the full field superset (irrelevant fields sent as `None`). Pydantic's
+# default `extra="ignore"` behavior drops whichever ones a given `kind`
+# doesn't declare.
 # ---------------------------------------------------------------------------
 
 
 class _KVCacheGroupBase(BaseModel):
     group_id: int
+    layer_count: int
     layer_names: list[str]
     block_size: int
     page_size_bytes: int
+    # Present (non-None) only when the group fans out a UniformTypeKVCacheSpecs
+    # into its per layer specs.
+    layer_specs: list[dict] | None = None
 
 
 class _FullAttentionBaseSpec(_KVCacheGroupBase):
@@ -112,24 +120,34 @@ class _FullAttentionBaseSpec(_KVCacheGroupBase):
 
 
 class FullAttentionGroupSpec(_FullAttentionBaseSpec):
-    spec_type: Literal["FullAttentionSpec"] = "FullAttentionSpec"
+    kind: Literal["full_attention"] = "full_attention"
 
 
 class MLAAttentionGroupSpec(_FullAttentionBaseSpec):
-    spec_type: Literal["MLAAttentionSpec"] = "MLAAttentionSpec"
+    kind: Literal["mla_attention"] = "mla_attention"
     cache_dtype_str: str | None = None
 
 
 class SlidingWindowGroupSpec(_KVCacheGroupBase):
-    spec_type: Literal["SlidingWindowSpec"] = "SlidingWindowSpec"
+    kind: Literal["sliding_window"] = "sliding_window"
     num_kv_heads: int
     head_size: int
     dtype: str
     sliding_window: int
 
 
+class SlidingWindowMLAGroupSpec(_KVCacheGroupBase):
+    kind: Literal["sliding_window_mla"] = "sliding_window_mla"
+    num_kv_heads: int
+    head_size: int
+    head_size_v: int
+    dtype: str
+    sliding_window: int
+    cache_dtype_str: str | None = None
+
+
 class ChunkedLocalAttentionGroupSpec(_KVCacheGroupBase):
-    spec_type: Literal["ChunkedLocalAttentionSpec"] = "ChunkedLocalAttentionSpec"
+    kind: Literal["chunked_local_attention"] = "chunked_local_attention"
     num_kv_heads: int
     head_size: int
     dtype: str
@@ -137,7 +155,7 @@ class ChunkedLocalAttentionGroupSpec(_KVCacheGroupBase):
 
 
 class MambaGroupSpec(_KVCacheGroupBase):
-    spec_type: Literal["MambaSpec"] = "MambaSpec"
+    kind: Literal["mamba"] = "mamba"
     shapes: list[list[int]]
     dtypes: list[str]
     mamba_type: str
@@ -145,32 +163,40 @@ class MambaGroupSpec(_KVCacheGroupBase):
 
 
 class CrossAttentionGroupSpec(_KVCacheGroupBase):
-    spec_type: Literal["CrossAttentionSpec"] = "CrossAttentionSpec"
+    kind: Literal["cross_attention"] = "cross_attention"
+    num_kv_heads: int
+    head_size: int
+    dtype: str
+
+
+class EncoderOnlyAttentionGroupSpec(_KVCacheGroupBase):
+    kind: Literal["encoder_only_attention"] = "encoder_only_attention"
     num_kv_heads: int
     head_size: int
     dtype: str
 
 
 class SinkFullAttentionGroupSpec(_FullAttentionBaseSpec):
-    spec_type: Literal["SinkFullAttentionSpec"] = "SinkFullAttentionSpec"
+    kind: Literal["sink_full_attention"] = "sink_full_attention"
     sink_len: int | None = None
 
 
-class UniformTypeGroupSpec(_KVCacheGroupBase):
-    spec_type: Literal["UniformTypeKVCacheSpecs"] = "UniformTypeKVCacheSpecs"
-    layer_specs: list[dict]
+class UnknownGroupSpec(_KVCacheGroupBase):
+    kind: Literal["unknown"] = "unknown"
 
 
 KVCacheGroupSpec = Annotated[
     FullAttentionGroupSpec
     | MLAAttentionGroupSpec
     | SlidingWindowGroupSpec
+    | SlidingWindowMLAGroupSpec
     | ChunkedLocalAttentionGroupSpec
     | MambaGroupSpec
     | CrossAttentionGroupSpec
+    | EncoderOnlyAttentionGroupSpec
     | SinkFullAttentionGroupSpec
-    | UniformTypeGroupSpec,
-    Field(discriminator="spec_type"),
+    | UnknownGroupSpec,
+    Field(discriminator="kind"),
 ]
 
 

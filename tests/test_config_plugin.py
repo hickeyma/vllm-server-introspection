@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for `GET /plugins/vllm-server-introspection/config`.
 
-Fast, no engine, no real vLLM/model. `VllmConfig` and its sub-configs are
+Fast, no engine and no real vLLM/model. `VllmConfig` and its sub configs are
 `MagicMock`s so the tests exercise `_build_response` and the FastAPI route in
 isolation.
 """

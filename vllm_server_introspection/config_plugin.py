@@ -4,7 +4,7 @@
 Operator supplied, config time values of how the server was launched.
 Nothing profiled or derived from model internals.
 
-`required_tasks` is `None`: this plugin needs no engine, so it is also
+`required_tasks` is `None`. This plugin needs no engine, so it is also
 eligible on the CPU only render server (`init_state` receives
 `engine_client=None` there which is fine since it is never touched).
 """
@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, FastAPI, HTTPException, Request
 from starlette.datastructures import State
+from vllm.logger import init_logger
 
 from .schemas import (
     FeaturesInfo,
@@ -28,6 +29,11 @@ from .schemas import (
 if TYPE_CHECKING:
     from vllm.config import VllmConfig
     from vllm.engine.protocol import EngineClient
+
+# "vllm." prefix required. vLLM's default logging config only attaches a
+# handler to the "vllm" logger tree (propagate=False), so a bare __name__
+# logger has no handler anywhere and silently drops messages.
+logger = init_logger(f"vllm.{__name__}")
 
 
 def _dtype_str(dtype: object) -> str:
@@ -151,4 +157,10 @@ class ServerConfigPlugin:
             served_names = list(args.served_model_name)
         else:
             served_names = [vllm_config.model_config.served_model_name]
-        state.server_config_response = _build_response(vllm_config, served_names)
+        response = _build_response(vllm_config, served_names)
+        state.server_config_response = response
+        logger.info(
+            "config plugin initialized: served_names=%s kv_transfer=%s",
+            served_names,
+            "configured" if response.kv_transfer is not None else "none",
+        )
